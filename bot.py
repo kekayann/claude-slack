@@ -3,6 +3,7 @@
 @duo [repo] <task>   start a session in a thread (repo = folder under WORK_ROOTS)
 reply in thread         steer / continue the session
 "stop" or ✋ reaction    interrupt the current turn
+"close"                 end the session (reply later to resume it)
 """
 
 import asyncio
@@ -66,6 +67,7 @@ class Session:
         self.status_ts: str | None = None
         self.log: list[str] = []
         self.last_edit = 0.0
+        self.closing = False
 
     async def start(self):
         await self.client.connect()
@@ -113,8 +115,16 @@ class Session:
                     await self.post(msg.result or msg.subtype)
                     self.status_ts, self.log = None, []
         except Exception as e:
+            if self.closing:
+                return
             await self.post(f":boom: session crashed: `{e}`")
             sessions.pop(self.thread, None)
+
+    async def close(self):
+        self.closing = True
+        sessions.pop(self.thread, None)
+        await self.client.disconnect()
+        await self.post(":lock: session closed. Reply here to resume it.")
 
     async def approve(self, tool: str, inp: dict, ctx):
         if tool in SAFE_TOOLS:
@@ -174,10 +184,14 @@ async def on_message(event):
     thread = event.get("thread_ts")
     if not thread or event.get("user") != ALLOWED_USER or event.get("subtype") or "<@" in event.get("text", ""):
         return  # mentions are handled by on_mention
+    text = event["text"].strip()
+    if text.lower() == "close":
+        if thread in sessions:
+            await sessions[thread].close()
+        return
     s = await get_session(event["channel"], thread)
     if not s:
         return
-    text = event["text"].strip()
     if text.lower() == "stop":
         await s.client.interrupt()
     else:

@@ -10,6 +10,7 @@ Drive Claude Code on this machine from Slack. Each Slack thread is its own Claud
 | `@duo <task>` | If the first word isn't a repo folder, runs in `~/work/insighture` |
 | Reply in the thread | Steers or continues the session |
 | `stop` or a ✋ reaction | Interrupts the current turn |
+| `close` | Ends the session and frees its process; reply in the thread later to resume it |
 | Approve / Deny buttons | Shown for shell commands and other non-read tools |
 
 - Reads, searches and file edits inside the repo run without asking.
