@@ -19,7 +19,6 @@ Drive Claude Code on this machine from Slack. Each Slack thread is its own Claud
 | Approve / Deny buttons | Shown for shell commands and other non-read tools |
 
 - Reads, searches and file edits inside the repo run without asking.
-
 - Progress shows in one status message that refreshes every few seconds; the final answer arrives as a new reply.
 - `sessions.db` maps threads to sessions, so a reply in an old thread resumes it even after a restart.
 - Only `SLACK_ALLOWED_USER` can control the bot.
