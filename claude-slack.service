@@ -1,0 +1,14 @@
+[Unit]
+Description=Claude Slack bridge
+After=network-online.target
+
+[Service]
+WorkingDirectory=%h/work/claude-slack
+EnvironmentFile=%h/work/claude-slack/.env
+Environment=PATH=%h/.local/bin:%h/.cargo/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=%h/.cargo/bin/uv run python bot.py
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target
