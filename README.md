@@ -62,6 +62,8 @@ journalctl --user -u claude-slack -f      # live logs
 | `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) |
 | `SLACK_APP_TOKEN` | App-level token (`xapp-…`) for Socket Mode |
 | `SLACK_ALLOWED_USER` | The only Slack member ID allowed to control the bot |
+| `CLAUDE_MODEL` | Model for sessions, e.g. `claude-opus-5-5` (blank = your Claude Code default) |
+| `CLAUDE_EFFORT` | Effort for sessions: `low`, `medium`, `high`, `xhigh`, `max` (blank = your default) |
 | `WORK_ROOTS` | Colon-separated folders searched for repo names; the first is the default |
 
 ## Notes
