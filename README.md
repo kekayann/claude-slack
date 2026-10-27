@@ -20,6 +20,10 @@ Drive Claude Code on this machine from Slack. Each Slack thread is its own Claud
 
 - Reads, searches and file edits inside the repo run without asking.
 
+- Progress shows in one status message that refreshes every few seconds; the final answer arrives as a new reply.
+- `sessions.db` maps threads to sessions, so a reply in an old thread resumes it even after a restart.
+- Only `SLACK_ALLOWED_USER` can control the bot.
+
 ### Claude's Slack tools
 
 Each session gets three Slack tools:
@@ -31,9 +35,6 @@ Each session gets three Slack tools:
 | `upload_file` | Uploads a local file (screenshot, image, log, PDF) to the thread, or to another channel/person | Only when sent outside the thread |
 
 Ask in plain words, e.g. "post a screenshot of the page here" or "tell #dev when the deploy is done".
-- Progress shows in one status message that refreshes every few seconds; the final answer arrives as a new reply.
-- `sessions.db` maps threads to sessions, so a reply in an old thread resumes it even after a restart.
-- Only `SLACK_ALLOWED_USER` can control the bot.
 
 ## How it runs
 
