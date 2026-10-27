@@ -12,6 +12,9 @@ Drive Claude Code on this machine from Slack. Each Slack thread is its own Claud
 | `stop` or a ✋ reaction | Interrupts the current turn |
 | `close` | Ends the session and frees its process; reply in the thread later to resume it |
 | `@duo sessions` | Lists open sessions with links to their threads and whether each is working or idle |
+| `@duo config` | Shows the model and effort new sessions use (in a thread: that session's) |
+| `@duo effort high` / `@duo model claude-sonnet-5-5` | Sets the default for new sessions; `default` reverts to `.env` |
+| `effort max` / `model …` reply in a thread | Changes just that session; it reopens with the new setting on your next message |
 | Approve / Deny buttons | Shown for shell commands and other non-read tools |
 
 - Reads, searches and file edits inside the repo run without asking.
@@ -62,8 +65,8 @@ journalctl --user -u claude-slack -f      # live logs
 | `SLACK_BOT_TOKEN` | Bot token (`xoxb-…`) |
 | `SLACK_APP_TOKEN` | App-level token (`xapp-…`) for Socket Mode |
 | `SLACK_ALLOWED_USER` | The only Slack member ID allowed to control the bot |
-| `CLAUDE_MODEL` | Model for sessions, e.g. `claude-opus-5-5` (blank = your Claude Code default) |
-| `CLAUDE_EFFORT` | Effort for sessions: `low`, `medium`, `high`, `xhigh`, `max` (blank = your default) |
+| `CLAUDE_MODEL` | Model for sessions, e.g. `claude-opus-5-5` (blank = your Claude Code default; Slack `@duo model` overrides) |
+| `CLAUDE_EFFORT` | Effort for sessions: `low`, `medium`, `high`, `xhigh`, `max` (blank = your default; Slack `@duo effort` overrides) |
 | `WORK_ROOTS` | Colon-separated folders searched for repo names; the first is the default |
 
 ## Notes

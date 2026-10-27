@@ -5,6 +5,8 @@ reply in thread         steer / continue the session
 "stop" or ✋ reaction    interrupt the current turn
 "close"                 end the session (reply later to resume it)
 @duo sessions           list open sessions
+@duo effort|model <x>   set the default for new sessions (@duo config shows it)
+"effort|model <x>"      in a thread: change it for that session
 """
 
 import asyncio
@@ -34,10 +36,12 @@ DEFAULT_CWD = WORK_ROOTS[0]
 SAFE_TOOLS = {"Read", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch", "Task", "NotebookRead"}
 UPDATE_EVERY = 3  # seconds between status edits
 SLACK_LIMIT = 3500
+EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
 db = sqlite3.connect(Path(__file__).with_name("sessions.db"))
 db.execute("CREATE TABLE IF NOT EXISTS sessions (thread TEXT PRIMARY KEY, channel TEXT, session_id TEXT, cwd TEXT)")
+db.execute("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)")
 sessions: dict[str, "Session"] = {}
 pending: dict[str, asyncio.Future] = {}  # tool_use_id -> approval future
 
@@ -48,6 +52,23 @@ def resolve_cwd(words: list[str]) -> tuple[Path, list[str]]:
             if (root / words[0]).is_dir():
                 return root / words[0], words[1:]
     return DEFAULT_CWD, words
+
+
+def setting(key: str, thread: str | None = None) -> str | None:
+    """Thread override, else global default from Slack, else env."""
+    for k in ([f"{thread}:{key}"] if thread else []) + [key]:
+        row = db.execute("SELECT value FROM settings WHERE key=?", (k,)).fetchone()
+        if row:
+            return row[0]
+    return os.environ.get(f"CLAUDE_{key.upper()}") or None
+
+
+def save_setting(key: str, value: str):
+    if value:
+        db.execute("REPLACE INTO settings VALUES (?,?)", (key, value))
+    else:
+        db.execute("DELETE FROM settings WHERE key=?", (key,))
+    db.commit()
 
 
 def short(obj, n=300) -> str:
@@ -62,6 +83,8 @@ class Session:
             cwd=str(cwd),
             resume=resume,
             permission_mode="acceptEdits",
+            model=setting("model", thread),
+            effort=setting("effort", thread),
             can_use_tool=self.approve,
             setting_sources=["user", "project", "local"],
         ))
@@ -121,11 +144,12 @@ class Session:
             await self.post(f":boom: session crashed: `{e}`")
             sessions.pop(self.thread, None)
 
-    async def close(self):
+    async def close(self, quiet=False):
         self.closing = True
         sessions.pop(self.thread, None)
         await self.client.disconnect()
-        await self.post(":lock: session closed. Reply here to resume it.")
+        if not quiet:
+            await self.post(":lock: session closed. Reply here to resume it.")
 
     async def approve(self, tool: str, inp: dict, ctx):
         if tool in SAFE_TOOLS:
@@ -173,6 +197,29 @@ async def list_sessions() -> str:
     return f"*{len(sessions)} open session(s)*\n" + "\n".join(lines)
 
 
+async def configure(words: list[str], thread: str | None) -> str | None:
+    """Handle `config`, `effort <x>`, `model <x>`. Returns a reply, or None if not a config command."""
+    if words == ["config"]:
+        return f"model: `{setting('model', thread) or 'default'}` · effort: `{setting('effort', thread) or 'default'}`"
+    if len(words) != 2 or words[0] not in ("effort", "model"):
+        return None
+    key, value = words[0], words[1]
+    if value == "default":
+        value = ""
+    elif key == "effort" and value not in EFFORTS:
+        return f"effort must be one of {', '.join(EFFORTS)} or default"
+    save_setting(f"{thread}:{key}" if thread else key, value)
+    shown = value or "default"
+    if not thread:
+        return f"New sessions will use {key} `{shown}`."
+    s = sessions.get(thread)
+    if s and s.status_ts:
+        return f"{key} set to `{shown}`; it applies after the current turn when you `close` and reply again."
+    if s:
+        await s.close(quiet=True)  # reopened with the new setting on the next reply
+    return f"This session will use {key} `{shown}` from your next message."
+
+
 @app.event("app_mention")
 async def on_mention(event, say):
     if event.get("user") != ALLOWED_USER:
@@ -181,6 +228,12 @@ async def on_mention(event, say):
     words = event["text"].split()[1:]  # drop the <@bot> mention
     if words == ["sessions"]:
         await say(text=await list_sessions(), thread_ts=event.get("thread_ts"))
+        return
+    in_session = bool(event.get("thread_ts")) and (thread in sessions or db.execute(
+        "SELECT 1 FROM sessions WHERE thread=?", (thread,)).fetchone())
+    reply = await configure(words, thread if in_session else None)
+    if reply:
+        await say(text=reply, thread_ts=event.get("thread_ts"))
         return
     s = await get_session(event["channel"], thread)
     if not s:
@@ -203,6 +256,12 @@ async def on_message(event):
     if text.lower() == "close":
         if thread in sessions:
             await sessions[thread].close()
+        return
+    if not (thread in sessions or db.execute("SELECT 1 FROM sessions WHERE thread=?", (thread,)).fetchone()):
+        return
+    reply = await configure(text.split(), thread)
+    if reply:
+        await app.client.chat_postMessage(channel=event["channel"], thread_ts=thread, text=reply)
         return
     s = await get_session(event["channel"], thread)
     if not s:
