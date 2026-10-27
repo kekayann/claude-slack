@@ -41,6 +41,10 @@ SAFE_TOOLS = SLACK_TOOLS | {"Read", "Glob", "Grep", "LS", "TodoWrite", "WebSearc
 UPDATE_EVERY = 3  # seconds between status edits
 SLACK_LIMIT = 3500
 SKIP_FLAGS = {"--skip-permissions", "--yolo", "—skip-permissions", "—yolo"}  # Slack may turn -- into —
+SLACK_PROMPT = """You are running headless; the user talks to you through a Slack thread and cannot see this
+machine's screen or files. When you make or find something they should look at (screenshots, images, charts,
+reports, logs), upload it with the slack upload_file tool, don't just read it yourself or mention its path.
+Use post_to_thread for progress milestones on long tasks. Keep replies short; Slack mrkdwn, not Markdown tables."""
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
@@ -93,6 +97,7 @@ class Session:
             can_use_tool=self.approve,
             setting_sources=["user", "project", "local"],
             mcp_servers={"slack": self.slack_tools()},
+            system_prompt={"type": "preset", "preset": "claude_code", "append": SLACK_PROMPT},
         ))
         self.status_ts: str | None = None
         self.log: list[str] = []
