@@ -64,5 +64,4 @@ journalctl --user -u claude-slack -f      # live logs
 
 ## Notes
 
-- If the bot's @-handle comes out as `duo2`, that username is already reserved in the workspace. You can still set the display name to `duo` under App Home.
 - Never commit `.env`.
