@@ -4,6 +4,7 @@
 reply in thread         steer / continue the session
 "stop" or ✋ reaction    interrupt the current turn
 "close"                 end the session (reply later to resume it)
+@duo sessions           list open sessions
 """
 
 import asyncio
@@ -161,12 +162,26 @@ async def get_session(channel: str, thread: str) -> "Session | None":
     return s
 
 
+async def list_sessions() -> str:
+    if not sessions:
+        return "No open sessions."
+    lines = []
+    for s in sessions.values():
+        link = (await app.client.chat_getPermalink(channel=s.channel, message_ts=s.thread))["permalink"]
+        state = ":hourglass: working" if s.status_ts else ":zzz: idle"
+        lines.append(f"• <{link}|{s.cwd.name}> {state}")
+    return f"*{len(sessions)} open session(s)*\n" + "\n".join(lines)
+
+
 @app.event("app_mention")
 async def on_mention(event, say):
     if event.get("user") != ALLOWED_USER:
         return
     thread = event.get("thread_ts") or event["ts"]
     words = event["text"].split()[1:]  # drop the <@bot> mention
+    if words == ["sessions"]:
+        await say(text=await list_sessions(), thread_ts=event.get("thread_ts"))
+        return
     s = await get_session(event["channel"], thread)
     if not s:
         cwd, words = resolve_cwd(words)
