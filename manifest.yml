@@ -13,6 +13,12 @@ oauth_config:
       - groups:history
       - im:history
       - reactions:read
+      - channels:read
+      - groups:read
+      - users:read
+      - im:write
+      - chat:write.public
+      - files:write
 settings:
   event_subscriptions:
     bot_events:

@@ -25,6 +25,8 @@ from claude_agent_sdk import (
     PermissionResultDeny,
     ResultMessage,
     SystemMessage,
+    create_sdk_mcp_server,
+    tool,
     TextBlock,
     ToolUseBlock,
 )
@@ -34,7 +36,8 @@ from slack_bolt.async_app import AsyncApp
 ALLOWED_USER = os.environ["SLACK_ALLOWED_USER"]
 WORK_ROOTS = [Path(p).expanduser() for p in os.environ.get("WORK_ROOTS", "~/work/insighture:~/work").split(":")]
 DEFAULT_CWD = WORK_ROOTS[0]
-SAFE_TOOLS = {"Read", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch", "Task", "NotebookRead"}
+SLACK_TOOLS = {f"mcp__slack__{n}" for n in ("post_to_thread", "send_message", "upload_file")}
+SAFE_TOOLS = SLACK_TOOLS | {"Read", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch", "Task", "NotebookRead"}
 UPDATE_EVERY = 3  # seconds between status edits
 SLACK_LIMIT = 3500
 SKIP_FLAGS = {"--skip-permissions", "--yolo", "—skip-permissions", "—yolo"}  # Slack may turn -- into —
@@ -89,6 +92,7 @@ class Session:
             effort=setting("effort", thread),
             can_use_tool=self.approve,
             setting_sources=["user", "project", "local"],
+            mcp_servers={"slack": self.slack_tools()},
         ))
         self.status_ts: str | None = None
         self.log: list[str] = []
@@ -153,28 +157,110 @@ class Session:
         if not quiet:
             await self.post(":lock: session closed. Reply here to resume it.")
 
-    async def approve(self, tool: str, inp: dict, ctx):
-        if tool in SAFE_TOOLS:
-            return PermissionResultAllow()
+    async def ask(self, key: str, prompt: str, detail: str) -> bool:
+        """Post Approve/Deny buttons in the thread and wait for a click."""
         fut = asyncio.get_running_loop().create_future()
-        pending[ctx.tool_use_id] = fut
-        prompt = ctx.title or f"Claude wants to use {tool}"
+        pending[key] = fut
         await app.client.chat_postMessage(
             channel=self.channel, thread_ts=self.thread, text=prompt,
             blocks=[
-                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{prompt}*\n```{short(inp, 1500)}```"}},
+                {"type": "section", "text": {"type": "mrkdwn", "text": f"*{prompt}*\n```{detail}```"}},
                 {"type": "actions", "elements": [
                     {"type": "button", "text": {"type": "plain_text", "text": "Approve"}, "style": "primary",
-                     "action_id": "approve", "value": ctx.tool_use_id},
+                     "action_id": "approve", "value": key},
                     {"type": "button", "text": {"type": "plain_text", "text": "Deny"}, "style": "danger",
-                     "action_id": "deny", "value": ctx.tool_use_id},
+                     "action_id": "deny", "value": key},
                 ]},
             ])
         try:
-            ok = await fut
+            return await fut
         finally:
-            pending.pop(ctx.tool_use_id, None)
+            pending.pop(key, None)
+
+    async def approve(self, tool: str, inp: dict, ctx):
+        if tool in SAFE_TOOLS:
+            return PermissionResultAllow()
+        ok = await self.ask(ctx.tool_use_id, ctx.title or f"Claude wants to use {tool}", short(inp, 1500))
         return PermissionResultAllow() if ok else PermissionResultDeny(message="Denied by user in Slack")
+
+    def slack_tools(self):
+        def reply(text):
+            return {"content": [{"type": "text", "text": text}]}
+
+        @tool("post_to_thread", "Post a progress update to the Slack thread the user is watching. "
+              "Use for milestones in long tasks; your final answer is posted automatically.", {"text": str})
+        async def post_to_thread(args):
+            await self.post(args["text"])
+            return reply("posted")
+
+        @tool("send_message", "Send a Slack message to a channel or person outside this thread. "
+              "target is '#channel-name', a channel ID, '@username', or a user ID. "
+              "The user must approve every message.", {"target": str, "text": str})
+        async def send_message(args):
+            target, text = args["target"].strip(), args["text"]
+            try:
+                channel = await resolve_target(target)
+            except LookupError as e:
+                return reply(f"error: {e}")
+            key = f"send:{time.time()}"
+            if not await self.ask(key, f"Claude wants to send a Slack message to {target}", short(text, 2500)):
+                return reply("The user denied sending this message.")
+            await app.client.chat_postMessage(channel=channel, text=text)
+            return reply(f"sent to {target}")
+
+        @tool("upload_file", "Upload a local file (screenshot, image, log, PDF...) to Slack. Path may be relative "
+              "to the working directory. Leave target empty to post in this thread; otherwise target is "
+              "'#channel-name', a channel ID, '@username', or a user ID and the user must approve.",
+              {"path": str, "comment": str, "target": str})
+        async def upload_file(args):
+            path = (self.cwd / Path(args["path"]).expanduser()).resolve()
+            if not path.is_file():
+                return reply(f"error: no file at {path}")
+            target = (args.get("target") or "").strip()
+            dest = {"channel": self.channel, "thread_ts": self.thread}
+            if target:
+                try:
+                    dest = {"channel": await resolve_target(target)}
+                except LookupError as e:
+                    return reply(f"error: {e}")
+                if not await self.ask(f"upload:{time.time()}", f"Claude wants to upload `{path.name}` to {target}",
+                                      short(args.get("comment") or str(path), 2500)):
+                    return reply("The user denied uploading this file.")
+            await app.client.files_upload_v2(file=str(path), filename=path.name,
+                                             initial_comment=args.get("comment") or None, **dest)
+            return reply(f"uploaded {path.name}" + (f" to {target}" if target else ""))
+
+        return create_sdk_mcp_server("slack", tools=[post_to_thread, send_message, upload_file])
+
+
+async def resolve_target(target: str) -> str:
+    """Turn '#name', '@name', or a raw ID into a channel ID to post to."""
+    if target.startswith("#"):
+        name, cursor = target[1:], None
+        while True:
+            r = await app.client.conversations_list(types="public_channel,private_channel", limit=1000, cursor=cursor)
+            for c in r["channels"]:
+                if c["name"] == name:
+                    return c["id"]
+            cursor = r.get("response_metadata", {}).get("next_cursor")
+            if not cursor:
+                raise LookupError(f"no channel named {target}")
+    user = target
+    if target.startswith("@"):
+        name, cursor, user = target[1:].lower(), None, None
+        while not user:
+            r = await app.client.users_list(limit=1000, cursor=cursor)
+            for u in r["members"]:
+                names = {u.get("name", ""), u["profile"].get("display_name", ""), u["profile"].get("real_name", "")}
+                if name in {n.lower() for n in names}:
+                    user = u["id"]
+                    break
+            cursor = r.get("response_metadata", {}).get("next_cursor")
+            if not user and not cursor:
+                raise LookupError(f"no user named {target}")
+    if user.startswith(("U", "W")):
+        return (await app.client.conversations_open(users=user))["channel"]["id"]
+    return user  # channel ID
 
 
 async def get_session(channel: str, thread: str) -> "Session | None":
