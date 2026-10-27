@@ -8,6 +8,7 @@ Drive Claude Code on this machine from Slack. Each Slack thread is its own Claud
 | --- | --- |
 | `@duo isee fix the failing tests` | Starts a session in `~/work/insighture/isee` and runs in a thread |
 | `@duo <task>` | If the first word isn't a repo folder, runs in `~/work/insighture` |
+| `@duo --skip-permissions isee <task>` | Starts a session that never asks for approval (also `--yolo`); it stays that way when resumed |
 | Reply in the thread | Steers or continues the session |
 | `stop` or a ✋ reaction | Interrupts the current turn |
 | `close` | Ends the session and frees its process; reply in the thread later to resume it |

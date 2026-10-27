@@ -1,6 +1,7 @@
 """Slack <-> Claude Code bridge (Socket Mode).
 
 @duo [repo] <task>   start a session in a thread (repo = folder under WORK_ROOTS)
+@duo --skip-permissions [repo] <task>   same, but Claude never asks for approval
 reply in thread         steer / continue the session
 "stop" or ✋ reaction    interrupt the current turn
 "close"                 end the session (reply later to resume it)
@@ -36,6 +37,7 @@ DEFAULT_CWD = WORK_ROOTS[0]
 SAFE_TOOLS = {"Read", "Glob", "Grep", "LS", "TodoWrite", "WebSearch", "WebFetch", "Task", "NotebookRead"}
 UPDATE_EVERY = 3  # seconds between status edits
 SLACK_LIMIT = 3500
+SKIP_FLAGS = {"--skip-permissions", "--yolo", "—skip-permissions", "—yolo"}  # Slack may turn -- into —
 EFFORTS = ("low", "medium", "high", "xhigh", "max")
 
 app = AsyncApp(token=os.environ["SLACK_BOT_TOKEN"])
@@ -82,7 +84,7 @@ class Session:
         self.client = ClaudeSDKClient(ClaudeAgentOptions(
             cwd=str(cwd),
             resume=resume,
-            permission_mode="acceptEdits",
+            permission_mode=setting("mode", thread) or "acceptEdits",
             model=setting("model", thread),
             effort=setting("effort", thread),
             can_use_tool=self.approve,
@@ -200,7 +202,8 @@ async def list_sessions() -> str:
 async def configure(words: list[str], thread: str | None) -> str | None:
     """Handle `config`, `effort <x>`, `model <x>`. Returns a reply, or None if not a config command."""
     if words == ["config"]:
-        return f"model: `{setting('model', thread) or 'default'}` · effort: `{setting('effort', thread) or 'default'}`"
+        return (f"model: `{setting('model', thread) or 'default'}` · effort: `{setting('effort', thread) or 'default'}`"
+                f" · permissions: `{'skipped' if setting('mode', thread) == 'bypassPermissions' else 'ask'}`")
     if len(words) != 2 or words[0] not in ("effort", "model"):
         return None
     key, value = words[0], words[1]
@@ -237,13 +240,18 @@ async def on_mention(event, say):
         return
     s = await get_session(event["channel"], thread)
     if not s:
+        skip = any(w in SKIP_FLAGS for w in words)
+        words = [w for w in words if w not in SKIP_FLAGS]
         cwd, words = resolve_cwd(words)
         if not words:
             await say(text=f"Usage: `@duo [repo] <task>` (default dir {DEFAULT_CWD})", thread_ts=thread)
             return
+        if skip:
+            save_setting(f"{thread}:mode", "bypassPermissions")
         s = sessions[thread] = Session(event["channel"], thread, cwd)
         await s.start()
-        await say(text=f":robot_face: session started in `{cwd}`", thread_ts=thread)
+        note = " :warning: permissions skipped, nothing will ask for approval" if skip else ""
+        await say(text=f":robot_face: session started in `{cwd}`{note}", thread_ts=thread)
     await s.send(" ".join(words))
 
 
