@@ -98,16 +98,22 @@ class Session:
         self.log: list[str] = []
         self.last_edit = 0.0
         self.closing = False
+        self.reply_pending = False  # user wrote mid-turn; post Claude's next text as its own reply
 
     async def start(self):
         await self.client.connect()
         asyncio.create_task(self.pump())
 
     async def send(self, text: str):
-        if not self.status_ts:
-            r = await app.client.chat_postMessage(channel=self.channel, thread_ts=self.thread, text=":hourglass: working…")
-            self.status_ts = r["ts"]
+        if self.status_ts:
+            self.reply_pending = True
+        else:
+            await self.new_status()
         await self.client.query(text)
+
+    async def new_status(self):
+        r = await app.client.chat_postMessage(channel=self.channel, thread_ts=self.thread, text=":hourglass: working…")
+        self.status_ts, self.log = r["ts"], []
 
     async def post(self, text: str, **kw):
         for i in range(0, max(len(text), 1), SLACK_LIMIT):
@@ -132,7 +138,14 @@ class Session:
                         if isinstance(b, ToolUseBlock):
                             self.log.append(f"• `{b.name}` {short(b.input, 120)}")
                         elif isinstance(b, TextBlock) and b.text.strip():
-                            self.log.append(f"> {short(b.text, 200)}")
+                            if self.reply_pending and self.status_ts:
+                                # answer to a mid-turn message: freeze the old status, reply, start a new status below
+                                self.reply_pending = False
+                                await self.refresh_status(force=True)
+                                await self.post(b.text)
+                                await self.new_status()
+                            else:
+                                self.log.append(f"> {short(b.text, 200)}")
                     await self.refresh_status()
                 elif isinstance(msg, ResultMessage):
                     if self.status_ts:
@@ -143,7 +156,7 @@ class Session:
                             channel=self.channel, ts=self.status_ts,
                             text=f"{icon} done ({msg.num_turns} turns{cost})\n" + "\n".join(self.log[-15:]))
                     await self.post(msg.result or msg.subtype)
-                    self.status_ts, self.log = None, []
+                    self.status_ts, self.log, self.reply_pending = None, [], False
         except Exception as e:
             if self.closing:
                 return
